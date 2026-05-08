@@ -84,9 +84,11 @@ LIGHTNING_RGB = (255, 248, 220)
 # Single glowing quadrant per cell — reads as "tiny cinder in this corner".
 EMBER_CHARS = "\u259d\u2598\u2596\u2597"             # "▝▘▖▗"
 EMBER_FG = [(170, 51, 16), (136, 34, 8), (153, 51, 21), (119, 26, 5)]
-# Burnt-tree skeletons: same crown silhouette as old growth but in dark sepia.
+# Burnt-tree skeletons: same crown silhouette as old growth, painted in
+# legible warm browns so the dead trees read as "burnt wood" rather than
+# disappearing into the background.
 SCORCHED_CHARS = "\u2599\u259f\u259b\u259c"          # "▙▟▛▜"
-SCORCHED_FG = [(34, 24, 18), (28, 20, 14), (38, 27, 20), (30, 22, 16)]
+SCORCHED_FG = [(102, 70, 40), (88, 58, 32), (115, 80, 46), (78, 52, 28)]
 # Lower-eighth blocks for ash — silhouette is at the floor, distinct from
 # any tree stage and reads as "settled char on the forest floor".
 ASH_CHARS = "\u2581\u2582\u2583\u2581"               # "▁▂▃▁"
@@ -96,16 +98,81 @@ EMPTY_CHARS = "      \u00b7"                         # 6 spaces + "·"
 EMPTY_FG = [(26, 26, 24), (24, 24, 21), (28, 28, 26), (22, 22, 20)]
 # Smoke drift on empty cells downwind of any active fire. Sparse braille so
 # the smoke trails read as floating particulates rather than solid mass.
+# Four light-grey shades give the column some volume — denser cells look
+# brighter, wisp cells fade — and are bright enough to actually read as
+# smoke against the dark forest floor.
 SMOKE_CHARS = "\u2801\u2802\u2808\u2810\u2820\u2804\u2806\u2807"  # "⠁⠂⠈⠐⠠⠄⠆⠇"
-SMOKE_FG = (60, 55, 48)
+SMOKE_FG = [(180, 182, 184), (148, 150, 152), (118, 120, 124), (162, 162, 160)]
 
-WIND_DIRS = {
-    "none": (0, 0),
-    "n": (0, -1),
-    "e": (1, 0),
-    "s": (0, 1),
-    "w": (-1, 0),
+# ---------------------------------------------------------------------------
+# Flying-ember sparks: small glowing particles ejected from active fire,
+# advected by the flow field (with a small upward buoyancy that fades as
+# they cool), and able to ignite trees they land on. The glyph reflects how
+# hot the ember still is — bright `*` when fresh, fading to a small `·` as
+# it dies — so the lifecycle is visible without any extra animation work.
+# ---------------------------------------------------------------------------
+EMBER_LIFE_GLYPHS = "\u00b7\u00b0\u2022*"   # "·°•*" indexed cold->hot
+EMBER_HOT_RGB  = (255, 210, 80)             # color at life=1.0
+EMBER_COLD_RGB = (150, 40, 8)               # color at life=0.0
+
+# Cap on simultaneous embers so a long-lived firestorm can't drag the frame
+# rate down. When new spawns push past this we keep the youngest (hottest)
+# ones via argpartition; older sparks die first, which matches the visual
+# expectation anyway.
+MAX_EMBERS = 128
+
+# Per-burning-cell, per-sim-step probability of ejecting a fresh ember.
+# Effective rate is scaled by `(0.4 + 0.6 * min(1, wind_strength))` so calm
+# fires still smolder a few sparks but a real wind sends them flying.
+EMBER_SPAWN_P = 0.06
+
+# Per-ember, per-sim-step probability of igniting a tree it's currently
+# sitting on. Multiplied by the ember's remaining life, so dying embers
+# (cool, dim) almost never light fires; fresh hot ones are the dangerous
+# ones. A successful ignition consumes the ember.
+EMBER_IGNITE_P = 0.30
+
+# Per-render-frame life decay; ember lifetime is 1 / EMBER_LIFE_DECAY frames.
+# At the default ~60Hz, 0.025 -> ~40 frames -> ~0.65s of flight, which is
+# enough to bridge a small gap when wind is strong enough to carry them.
+EMBER_LIFE_DECAY = 0.025
+
+# Flow-field velocity multiplier per render frame for ember advection.
+EMBER_SPEED = 0.6
+
+# Upward bias (cells per frame at life=1) modeling hot air rising. Decays
+# linearly with remaining life, so a dying ember floats more sideways
+# before finally falling out of the simulation.
+EMBER_BUOYANCY = 0.30
+
+# Optional prevailing-wind compass for the `--bias` flag. The vectors are
+# unit-length in (dx, dy) screen coordinates; the flow field adds them as a
+# constant offset on top of the divergence-free curl-noise term.
+BIAS_DIRS = {
+    "none": (0.0, 0.0),
+    "n":    (0.0, -1.0),
+    "ne":   (0.7071068, -0.7071068),
+    "e":    (1.0, 0.0),
+    "se":   (0.7071068, 0.7071068),
+    "s":    (0.0, 1.0),
+    "sw":   (-0.7071068, 0.7071068),
+    "w":    (-1.0, 0.0),
+    "nw":   (-0.7071068, -0.7071068),
 }
+
+# Fraction of `--wind` strength that the prevailing-bias contributes; the
+# remainder comes from the time-evolving curl-noise. Keeps the swirl visible
+# even at strong bias.
+BIAS_FRACTION = 0.6
+
+# How strongly per-cell flow alignment biases per-direction spread probability.
+# multiplier = clip(1 + ALPHA * (flow . spread_dir_unit), MULT_MIN, MULT_MAX);
+# tuned so that a unit-magnitude flow aligned with spread roughly matches the
+# old fixed-wind +60% boost, and a unit-magnitude opposing flow roughly
+# matches the old -60% suppression.
+SPREAD_ALPHA = 0.55
+SPREAD_MULT_MIN = 0.1
+SPREAD_MULT_MAX = 2.5
 
 # ---------------------------------------------------------------------------
 # Precomputed lookup tables. Built once at import; indexed with numpy fancy
@@ -128,11 +195,14 @@ _ASH_CHARS = _codepoints(ASH_CHARS)
 _EMBER_CHARS = _codepoints(EMBER_CHARS)
 _SCORCHED_CHARS = _codepoints(SCORCHED_CHARS)
 _SMOKE_CHARS = _codepoints(SMOKE_CHARS)
+# Ember-particle glyph indexed by life-tier (0=cold .. 3=hot). Tier is
+# computed per render as `clip(int(life * 4), 0, 3)`.
+_EMBER_LIFE_GLYPHS = _codepoints(EMBER_LIFE_GLYPHS)
 _EMPTY_RGB = np.array([_rgb_pack(*c) for c in EMPTY_FG], dtype=np.uint32)
 _ASH_RGB = np.array([_rgb_pack(*c) for c in ASH_FG], dtype=np.uint32)
 _EMBER_RGB = np.array([_rgb_pack(*c) for c in EMBER_FG], dtype=np.uint32)
 _SCORCHED_RGB = np.array([_rgb_pack(*c) for c in SCORCHED_FG], dtype=np.uint32)
-_SMOKE_RGB = np.uint32(_rgb_pack(*SMOKE_FG))
+_SMOKE_RGB = np.array([_rgb_pack(*c) for c in SMOKE_FG], dtype=np.uint32)
 _LIGHTNING_RGB = np.uint32(_rgb_pack(*LIGHTNING_RGB))
 
 # Fire color base, indexed by ff_idx = (h + tick) % 5.
@@ -169,7 +239,10 @@ meta = {
     "description": "A regrowing forest plagued by lightning, fire, and wind.",
     "usage": (
         "[--growth N] [--lightning N] [--spread N] "
-        "[--wind n|e|s|w|none] [--speed 0..10] [--fps 10..60] [--density 0..1]"
+        "[--wind 0..3] [--turbulence 0..1] [--bias n|ne|e|...|none] "
+        "[--scale 0.5..4] [--embers 0..3] [--ember-ignite 0..3] "
+        "[--ember-life 0.25..4] [--ember-buoyancy 0..2] "
+        "[--speed 0..10] [--fps 10..60] [--density 0..1]"
     ),
 }
 
@@ -192,29 +265,183 @@ def _seed_forest(rng, rows, cols, density):
     return grid
 
 
-def _build_dir_table(spread_p, wdx, wdy):
-    """Pre-compute, for each of the 8 neighbor offsets, both the per-direction
-    spread probability and the *spread-direction code* that we'll record in
-    `dir_grid` when a cell catches fire from that neighbor.
+# All 8 neighbor offsets paired with the spread-direction code (0..8) the
+# winning neighbor donates to `dir_grid`. Iteration order is shuffled per
+# step in `_step_forest` so the recorded direction is fairly weighted.
+_NEIGHBORS = []
+for _dy in (-1, 0, 1):
+    for _dx in (-1, 0, 1):
+        if _dx == 0 and _dy == 0:
+            continue
+        _len = (_dx * _dx + _dy * _dy) ** 0.5
+        # Diagonals get an extra distance penalty so the front doesn't run
+        # along corners faster than along edges; matches the historical 0.55x.
+        _diag = 0.55 if (abs(_dx) + abs(_dy) == 2) else 1.0
+        # Unit vector of the *spread* direction (opposite of neighbor offset),
+        # used per-cell to dot against the flow vector.
+        _NEIGHBORS.append((
+            _dy, _dx,
+            float(-_dx / _len), float(-_dy / _len),
+            float(_diag),
+            int((-_dy + 1) * 3 + (-_dx + 1)),  # spread_code 0..8
+        ))
 
-    If the burning neighbor is at offset (dy, dx) from the new cell, the fire
-    is moving in direction (-dy, -dx). That spread direction is encoded into
-    a single 0..8 index in row-major 3x3 order (see FIRE_DIR_GLYPHS)."""
-    table = []
-    for dy in (-1, 0, 1):
-        for dx in (-1, 0, 1):
-            if dx == 0 and dy == 0:
-                continue
-            p = spread_p
-            if dx == wdx or dy == wdy:
-                p = min(1.0, p * 1.6)
-            if dx == -wdx or dy == -wdy:
-                p *= 0.4
-            if abs(dx) + abs(dy) == 2:
-                p *= 0.55
-            spread_code = (-dy + 1) * 3 + (-dx + 1)  # 0..8
-            table.append((dy, dx, float(p), int(spread_code)))
-    return table
+
+def _flow_field(rows, cols, t, strength, turbulence, bias_x, bias_y, scale,
+                scratch):
+    """Build a (wfx, wfy) per-cell flow field as the curl of a stream function
+    (sum of two sinusoidal harmonics in (x, y, t)) plus an optional constant
+    bias. Returns float32 arrays of shape (rows, cols), or (None, None) when
+    `strength` is zero (calm: every consumer takes a fast path).
+
+    The curl construction (wfx = d_psi/dy, wfy = -d_psi/dx) gives a
+    divergence-free field, which reads as fluid flow with vortices and
+    saddle points instead of "everything pointing the same way".
+
+    Cost is dominated by 8 small 1D sin/cos evaluations and 4 outer-product
+    multiplies, so it's linear in (rows + cols) for the trig and (rows*cols)
+    for the products — single-digit milliseconds at terminal sizes.
+    """
+    if strength <= 0:
+        return None, None
+
+    base_freq = 0.085 / max(0.5, scale)
+    k1 = base_freq
+    k2 = base_freq * 2.3
+
+    # Time-evolution rates per harmonic. turbulence=0 freezes the field
+    # (still spatially complex, just stationary); turbulence=1 visibly churns.
+    w1 = 0.20 * turbulence
+    w2 = 0.31 * turbulence
+    p1 = 0.13 * turbulence
+    p2 = 0.27 * turbulence
+
+    # Reuse 1D scratch axes when shape is unchanged.
+    cached_shape = scratch.get("shape")
+    if cached_shape != (rows, cols):
+        scratch["x"] = np.arange(cols, dtype=np.float32)
+        scratch["y"] = np.arange(rows, dtype=np.float32)
+        scratch["shape"] = (rows, cols)
+    x = scratch["x"]
+    y = scratch["y"]
+
+    # 1D row/col phase vectors for each harmonic. sin/cos cost is O(rows+cols).
+    sx1 = np.sin(k1 * x + w1 * t, dtype=np.float32)[None, :]
+    cx1 = np.cos(k1 * x + w1 * t, dtype=np.float32)[None, :]
+    sy1 = np.sin(k1 * y + p1 * t, dtype=np.float32)[:, None]
+    cy1 = np.cos(k1 * y + p1 * t, dtype=np.float32)[:, None]
+
+    sx2 = np.sin(k2 * x + w2 * t + 0.7, dtype=np.float32)[None, :]
+    cx2 = np.cos(k2 * x + w2 * t + 0.7, dtype=np.float32)[None, :]
+    sy2 = np.sin(k2 * y + p2 * t + 1.3, dtype=np.float32)[:, None]
+    cy2 = np.cos(k2 * y + p2 * t + 1.3, dtype=np.float32)[:, None]
+
+    # psi_i = sin(k*x+...) * cos(k*y+...);  d/dy = -k * sin*sin;  -d/dx = -k * cos*cos.
+    # We absorb the k factor into the per-harmonic amplitude so the resulting
+    # field is roughly bounded in [-1.6, 1.6]; renormalize to roughly unit.
+    raw_x = -(sx1 * sy1) - 0.6 * (sx2 * sy2)
+    raw_y = -(cx1 * cy1) - 0.6 * (cx2 * cy2)
+    inv = np.float32(1.0 / 1.6)
+
+    wfx = (strength * inv) * raw_x + np.float32(bias_x)
+    wfy = (strength * inv) * raw_y + np.float32(bias_y)
+    return wfx.astype(np.float32, copy=False), wfy.astype(np.float32, copy=False)
+
+
+def _spawn_embers(burning_mask, embers, wind_strength, spawn_p, rng):
+    """Roll a Bernoulli per BURNING cell and append fresh embers (life=1) at
+    those positions. Cap total at MAX_EMBERS by keeping the youngest sparks
+    (they have the most energy left to do something interesting).
+
+    `spawn_p` is the *effective* per-cell, per-step probability (already
+    scaled by `--embers`); the wind-strength rolloff is applied here so that
+    calm fires still smolder a few sparks but a real wind sends them flying.
+    """
+    if not burning_mask.any() or spawn_p <= 0:
+        return embers
+    ys_b, xs_b = np.nonzero(burning_mask)
+    n = ys_b.size
+    p = spawn_p * (0.4 + 0.6 * min(1.0, wind_strength))
+    roll = rng.random(n, dtype=np.float32)
+    spawned = roll < p
+    if not spawned.any():
+        return embers
+    sy = ys_b[spawned].astype(np.float32)
+    sx = xs_b[spawned].astype(np.float32)
+    new = np.column_stack([sy, sx, np.ones(sy.size, dtype=np.float32)])
+    embers = new if embers.size == 0 else np.vstack([embers, new])
+    if embers.shape[0] > MAX_EMBERS:
+        # argpartition by negative life keeps the highest-life rows up front.
+        keep = np.argpartition(-embers[:, 2], MAX_EMBERS - 1)[:MAX_EMBERS]
+        embers = embers[keep]
+    return embers
+
+
+def _ignite_embers(embers, grid, dir_grid, ignite_p, rng):
+    """Roll ignition for each ember sitting on a tree cell; light the tree on
+    fire (BURNING + DIR_NONE so the renderer draws the upward arrow), and
+    consume the spark. Mutates `grid` and `dir_grid` in place.
+
+    `ignite_p` is the *effective* per-step ignition probability (already
+    scaled by `--ember-ignite`); it's further multiplied by each ember's
+    remaining life so dim/dying embers almost never start fires."""
+    if embers.shape[0] == 0 or ignite_p <= 0:
+        return embers
+    rows, cols = grid.shape
+    ys = np.clip(embers[:, 0].astype(np.int32), 0, rows - 1)
+    xs = np.clip(embers[:, 1].astype(np.int32), 0, cols - 1)
+    cell = grid[ys, xs]
+    # Trees are values 1..(SCORCHED-1); EMPTY=0 and SCORCHED/BURNING/EMBER/ASH
+    # are sentinel values >= SCORCHED.
+    on_tree = (cell >= 1) & (cell < SCORCHED)
+    p = ignite_p * embers[:, 2]
+    roll = rng.random(embers.shape[0], dtype=np.float32)
+    ignites = on_tree & (roll < p)
+    if ignites.any():
+        gy = ys[ignites]
+        gx = xs[ignites]
+        grid[gy, gx] = BURNING
+        dir_grid[gy, gx] = DIR_NONE
+        embers = embers[~ignites]
+    return embers
+
+
+def _advect_embers(embers, wfx, wfy, shape, life_decay, buoyancy, rng):
+    """Per-frame ember update: drift along the local flow with a small upward
+    buoyancy + jitter, decay life, cull dead and out-of-bounds. Returns the
+    new (possibly shorter) array.
+
+    `life_decay` and `buoyancy` are the *effective* values (already scaled
+    by `--ember-life` and `--ember-buoyancy`)."""
+    if embers.shape[0] == 0:
+        return embers
+    rows, cols = shape
+    if wfx is not None:
+        ys = np.clip(embers[:, 0].astype(np.int32), 0, rows - 1)
+        xs = np.clip(embers[:, 1].astype(np.int32), 0, cols - 1)
+        # Per-ember jitter so embers spawned at the same cell diverge instead
+        # of moving in lockstep.
+        jitter_x = (rng.random(embers.shape[0], dtype=np.float32) - 0.5) * 0.25
+        jitter_y = (rng.random(embers.shape[0], dtype=np.float32) - 0.5) * 0.15
+        embers[:, 0] += (
+            wfy[ys, xs] * EMBER_SPEED
+            - buoyancy * embers[:, 2]
+            + jitter_y
+        )
+        embers[:, 1] += wfx[ys, xs] * EMBER_SPEED + jitter_x
+    else:
+        # Calm path (no flow field): pure buoyancy + small horizontal jitter.
+        # Reached only if `_spawn_embers` was called with wind_strength == 0.
+        jitter_x = (rng.random(embers.shape[0], dtype=np.float32) - 0.5) * 0.2
+        embers[:, 0] -= buoyancy * embers[:, 2]
+        embers[:, 1] += jitter_x
+    embers[:, 2] -= life_decay
+    alive = (
+        (embers[:, 2] > 0.0)
+        & (embers[:, 0] >= 0.0) & (embers[:, 0] < rows)
+        & (embers[:, 1] >= 0.0) & (embers[:, 1] < cols)
+    )
+    return embers[alive]
 
 
 def _shifted_into(out, src, dy, dx):
@@ -231,7 +458,7 @@ def _shifted_into(out, src, dy, dx):
     out[dy_dst, dx_dst] = src[sy, sx]
 
 
-def _step_forest(grid, dir_table, growth_p, lightning_p, rng):
+def _step_forest(grid, spread_p, wfx, wfy, growth_p, lightning_p, rng):
     """Vectorized simulation step.
 
     The spread step uses the *sequential-OR* form: for each of the 8 neighbor
@@ -241,6 +468,13 @@ def _step_forest(grid, dir_table, growth_p, lightning_p, rng):
     the product form `P(catch) = 1 - prod(1 - p_dir)`, but it has the side
     benefit of telling us *which* direction won, which we use to render the
     flame as an arrow pointing in the spread direction.
+
+    When `wfx`/`wfy` are provided (non-calm wind), per-direction probability
+    becomes per-cell: `p = spread * diag * clip(1 + ALPHA * align)` where
+    `align = flow_at_burning_neighbor . unit_spread_direction`. This makes
+    the fire front lean into the local flow, spiral around vortices, and
+    stall in dead zones, all without the simulation needing to know about
+    the global wind direction.
 
     Returns (new_grid, new_dir_grid) where new_dir_grid is uint8 0..8 and
     only meaningful for cells that became BURNING this step."""
@@ -256,22 +490,39 @@ def _step_forest(grid, dir_table, growth_p, lightning_p, rng):
     new_dir_grid = np.zeros(grid.shape, dtype=np.uint8)
     nb = np.empty_like(is_burning)
     rand_buf = np.empty(grid.shape, dtype=np.float32)
+    have_wind = wfx is not None
+    if have_wind:
+        nbfx = np.empty_like(wfx)
+        nbfy = np.empty_like(wfy)
 
     # Shuffle direction iteration order per step. Sequential-OR with a fixed
     # order would bias the recorded direction toward whichever direction
     # appears earliest in the loop; with a fresh shuffle each step, the
     # recorded direction is fairly weighted by each neighbor's p_dir.
-    perm = rng.permutation(len(dir_table)).tolist()
+    perm = rng.permutation(len(_NEIGHBORS)).tolist()
     for idx in perm:
-        dy, dx, p, spread_code = dir_table[idx]
-        if p <= 0:
-            continue
+        dy, dx, sd_x, sd_y, diag, spread_code = _NEIGHBORS[idx]
         _shifted_into(nb, is_burning, dy, dx)
         candidate = is_tree & nb & ~catch_fire
         if not candidate.any():
             continue
         rng.random(out=rand_buf, dtype=np.float32)
-        ignite = candidate & (rand_buf < p)
+        if have_wind:
+            # Pull the flow at each burning neighbor into the candidate cell's
+            # frame; alignment of that flow with the spread direction (-dy,-dx)
+            # is what determines how strongly the wind helps or hinders.
+            _shifted_into(nbfx, wfx, dy, dx)
+            _shifted_into(nbfy, wfy, dy, dx)
+            align = nbfx * np.float32(sd_x) + nbfy * np.float32(sd_y)
+            mult = np.clip(1.0 + SPREAD_ALPHA * align,
+                           SPREAD_MULT_MIN, SPREAD_MULT_MAX)
+            p_per_cell = np.minimum(1.0, spread_p * diag * mult)
+            ignite = candidate & (rand_buf < p_per_cell)
+        else:
+            p = spread_p * diag
+            if p <= 0:
+                continue
+            ignite = candidate & (rand_buf < p)
         catch_fire |= ignite
         new_dir_grid[ignite] = spread_code
 
@@ -339,7 +590,7 @@ def _pack_rgb(r, g, b):
     return (r << 16) | (g << 8) | b
 
 
-def _compute_frame(grid, dir_grid, hash_table, tick, wdx, wdy, particles):
+def _compute_frame(grid, dir_grid, hash_table, tick, wfx, wfy, embers):
     """Vectorized "what should each cell look like this frame?" pass.
 
     Returns parallel arrays:
@@ -349,10 +600,12 @@ def _compute_frame(grid, dir_grid, hash_table, tick, wdx, wdy, particles):
 
     Layered top-to-bottom:
       1. base render per state (empty / ash / scorched / ember / burning / tree)
-      2. smoke replaces empty cells downwind of any active fire
-      3. heat-glow halo: warm tint within radius 2 of any burning cell
-      4. singed trees: trees adjacent to fire are dimmed and reddened
-      5. wind particles: a few bright drifting cells overlaid on top
+      2. flow-field tint on live forest cells (subtle directional hue shift)
+      3. smoke advects from each burning cell along the per-cell flow
+      4. heat-glow halo: warm tint within radius 2 of any burning cell
+      5. singed trees: trees adjacent to fire are dimmed and reddened
+      6. flying ember sparks overlaid on top (skipping BURNING cells so the
+         flame visuals always win)
     """
     h = hash_table
     h32 = h.astype(np.int32)
@@ -416,24 +669,57 @@ def _compute_frame(grid, dir_grid, hash_table, tick, wdx, wdy, particles):
         char_arr[tree_mask] = _TREE_CHARS[si, h & 3][tree_mask]
         rgb_arr[tree_mask] = _TREE_RGB[si, h32 % 36][tree_mask]
 
-    # --- 2. Smoke drift (only when there's wind and active fire) -----------
-    has_fire = burning_mask.any()
-    if has_fire and (wdx != 0 or wdy != 0) and empty_mask.any():
-        smoke_mask = np.zeros_like(empty_mask)
-        nb = np.empty_like(burning_mask)
-        # For each downwind step (1..3) ask: is there a burning cell that
-        # would have drifted smoke into this empty cell? "(y,x) sees smoke
-        # from (y - wdy*k, x - wdx*k)", i.e. shift burning by (-wdy*k, -wdx*k).
-        for k in (1, 2, 3):
-            _shifted_into(nb, burning_mask, -wdy * k, -wdx * k)
-            smoke_mask |= nb
-        smoke_mask &= empty_mask
-        if smoke_mask.any():
-            smoke_idx = (h32 + tick) % len(_SMOKE_CHARS)
-            char_arr[smoke_mask] = _SMOKE_CHARS[smoke_idx][smoke_mask]
-            rgb_arr[smoke_mask] = _SMOKE_RGB
+    # --- 2. Flow-field tint on live forest cells --------------------------
+    # Subtle directional hue shift so the canopy traces flow lines without
+    # ever stopping reading as "green forest". The deltas are flow-magnitude
+    # scaled, so calm regions (low |flow|) auto-dampen to near-zero shift.
+    # Caps are tight (~+/-9 r, +/-5 g, +/-7 b) — enough to be perceptible at
+    # the field's coherent scale, small enough to not look like a different
+    # palette per cell.
+    if wfx is not None and tree_mask.any():
+        fx_clip = np.clip(wfx, -1.0, 1.0)
+        fy_clip = np.clip(wfy, -1.0, 1.0)
+        r, g, b = _split_rgb(rgb_arr)
+        ri = r.astype(np.int16)
+        gi = g.astype(np.int16)
+        bi = b.astype(np.int16)
+        ri += (9.0 * fx_clip).astype(np.int16)
+        gi += (5.0 * fy_clip).astype(np.int16)
+        bi += (-7.0 * fy_clip).astype(np.int16)
+        np.clip(ri, 0, 255, out=ri)
+        np.clip(gi, 0, 255, out=gi)
+        np.clip(bi, 0, 255, out=bi)
+        tinted = _pack_rgb(ri.astype(np.uint16),
+                           gi.astype(np.uint16),
+                           bi.astype(np.uint16))
+        rgb_arr[tree_mask] = tinted[tree_mask]
 
-    # --- 3. Heat-glow halo: warm tint on cells within radius 2 of fire ----
+    # --- 3. Smoke advection from each burning cell along the flow ---------
+    # Scatter smoke markers at (y + wfy*k, x + wfx*k) for k in (1,2,3) for
+    # every burning cell, then drop any that don't land on EMPTY. This is
+    # truthful to the per-cell flow direction (vortices shed smoke that
+    # spirals, not slabs that translate). Cost scales with #burning cells,
+    # which is bounded by the active fire perimeter.
+    has_fire = burning_mask.any()
+    if has_fire and wfx is not None and empty_mask.any():
+        rows, cols = grid.shape
+        ys_b, xs_b = np.nonzero(burning_mask)
+        if ys_b.size:
+            fy_b = wfy[ys_b, xs_b]
+            fx_b = wfx[ys_b, xs_b]
+            smoke_mask = np.zeros_like(empty_mask)
+            for k in (1, 2, 3):
+                ty = ys_b + np.rint(fy_b * k).astype(np.int32)
+                tx = xs_b + np.rint(fx_b * k).astype(np.int32)
+                valid = (ty >= 0) & (ty < rows) & (tx >= 0) & (tx < cols)
+                smoke_mask[ty[valid], tx[valid]] = True
+            smoke_mask &= empty_mask
+            if smoke_mask.any():
+                smoke_idx = (h32 + tick) % len(_SMOKE_CHARS)
+                char_arr[smoke_mask] = _SMOKE_CHARS[smoke_idx][smoke_mask]
+                rgb_arr[smoke_mask] = _SMOKE_RGB[h & 3][smoke_mask]
+
+    # --- 4. Heat-glow halo: warm tint on cells within radius 2 of fire ----
     if has_fire:
         halo = _dilate_neighborhood(burning_mask, 2) & ~burning_mask
         if halo.any():
@@ -445,7 +731,7 @@ def _compute_frame(grid, dir_grid, hash_table, tick, wdx, wdy, particles):
             tinted = _pack_rgb(r, g, b)
             rgb_arr[halo] = tinted[halo]
 
-    # --- 4. Singed trees: trees adjacent to fire are reddened/darkened ----
+    # --- 5. Singed trees: trees adjacent to fire are reddened/darkened ----
     if has_fire and tree_mask.any():
         danger = _dilate_neighborhood(burning_mask, 1) & tree_mask
         if danger.any():
@@ -457,13 +743,30 @@ def _compute_frame(grid, dir_grid, hash_table, tick, wdx, wdy, particles):
             singed = _pack_rgb(r, g, b)
             rgb_arr[danger] = singed[danger]
 
-    # --- 5. Wind particles overlay ----------------------------------------
-    if particles is not None and len(particles) > 0:
+    # --- 6. Flying-ember sparks ------------------------------------------
+    # Painted last so they sit on top of trees/smoke/halo. We deliberately
+    # skip cells that are currently BURNING so the directional flame glyph
+    # isn't briefly replaced by a `*` as a spark crosses an active fire.
+    if embers is not None and embers.shape[0] > 0:
         rows, cols = grid.shape
-        ys = particles[:, 0].astype(np.int32) % rows
-        xs = particles[:, 1].astype(np.int32) % cols
-        char_arr[ys, xs] = ord("\u00b7")
-        rgb_arr[ys, xs] = (148 << 16) | (148 << 8) | 138
+        ys = np.clip(embers[:, 0].astype(np.int32), 0, rows - 1)
+        xs = np.clip(embers[:, 1].astype(np.int32), 0, cols - 1)
+        life = embers[:, 2]
+        show = grid[ys, xs] != BURNING
+        if show.any():
+            ys = ys[show]
+            xs = xs[show]
+            life = life[show]
+            # Char tier: cooler embers shrink from `*` to `·`.
+            tier = np.clip((life * 4.0).astype(np.int32), 0, 3)
+            char_arr[ys, xs] = _EMBER_LIFE_GLYPHS[tier]
+            # Color: lerp HOT (life=1) toward COLD (life=0).
+            hr, hg, hb = EMBER_HOT_RGB
+            cr, cg, cb = EMBER_COLD_RGB
+            r = (hr * life + cr * (1.0 - life)).astype(np.uint32)
+            g = (hg * life + cg * (1.0 - life)).astype(np.uint32)
+            b = (hb * life + cb * (1.0 - life)).astype(np.uint32)
+            rgb_arr[ys, xs] = (r << 16) | (g << 8) | b
 
     return char_arr, rgb_arr
 
@@ -521,35 +824,58 @@ def run(argv=None):
     spread = num(flags.get("spread"), 0.7, 0.05, 1)
     speed = num(flags.get("speed"), 1.0, 0.0, 10.0)
     fps = num_int(flags.get("fps"), 60, 10, 60)
-    density = num(flags.get("density"), 0.55, 0, 1)
-    wind_key = flags.get("wind")
-    if not isinstance(wind_key, str) or wind_key not in WIND_DIRS:
-        wind_key = "none"
-    wdx, wdy = WIND_DIRS[wind_key]
+    density = num(flags.get("density"), 0.43, 0, 1)
+    wind_strength = num(flags.get("wind"), 1.0, 0.0, 3.0)
+    turbulence = num(flags.get("turbulence"), 0.3, 0.0, 1.0)
+    scale = num(flags.get("scale"), 3.0, 0.5, 4.0)
+    bias_key = flags.get("bias")
+    if not isinstance(bias_key, str) or bias_key not in BIAS_DIRS:
+        bias_key = "none"
+    bias_ux, bias_uy = BIAS_DIRS[bias_key]
+    bias_x = wind_strength * BIAS_FRACTION * bias_ux
+    bias_y = wind_strength * BIAS_FRACTION * bias_uy
+
+    # Ember knobs: each is a multiplier on its corresponding base constant,
+    # so default 1.0 keeps the previously-tuned behavior. `--embers 0`
+    # disables sparks entirely (gates spawn off; advect/ignite become no-ops).
+    embers_intensity = num(flags.get("embers"), 1.0, 0.0, 3.0)
+    ember_ignite_mult = num(flags.get("ember-ignite"), 0.6, 0.0, 3.0)
+    ember_life_mult = num(flags.get("ember-life"), 2.5, 0.25, 4.0)
+    ember_buoyancy_mult = num(flags.get("ember-buoyancy"), 0.0, 0.0, 2.0)
+    ember_spawn_p_eff = EMBER_SPAWN_P * embers_intensity
+    ember_ignite_p_eff = EMBER_IGNITE_P * ember_ignite_mult
+    # `--ember-life` is a *lifetime* multiplier; longer life means slower
+    # decay per frame, so divide rather than multiply.
+    ember_life_decay_eff = EMBER_LIFE_DECAY / ember_life_mult
+    ember_buoyancy_eff = EMBER_BUOYANCY * ember_buoyancy_mult
+    embers_active = wind_strength > 0 and embers_intensity > 0
 
     rng = np.random.default_rng()
-    dir_table = _build_dir_table(spread, wdx, wdy)
 
     state = {
         "grid": None,
         "dir_grid": None,
         "hash": None,
         "prev": None,
-        "particles": None,
         # State *before* the most recent simulation step, kept so we can
         # stagger per-cell visual transitions across the frames between
         # sim ticks (see below). Same shape/dtype as `grid` / `dir_grid`.
         "prev_grid": None,
         "prev_dir_grid": None,
         "frames_since_step": 0,
+        # Per-cell flow field, refreshed once per simulation step (None when
+        # wind_strength == 0; every consumer takes a fast path in that case).
+        "wfx": None,
+        "wfy": None,
+        # Persistent scratch for `_flow_field` (1D x/y axes, etc).
+        "flow_scratch": {},
+        # Sim-time clock advanced once per sim step; drives flow evolution.
+        "sim_t": 0.0,
+        # Live ember-particle table: float32 (N, 3), columns are y, x, life.
+        # Empty until the first burning cell ejects a spark.
+        "embers": np.empty((0, 3), dtype=np.float32),
     }
     needs_resize = [True]
-
-    # Wind particles drift across the screen at the wind direction; they are
-    # purely a render overlay (no effect on the simulation). With calm wind
-    # we skip them entirely — there's no preferred direction and stationary
-    # specks would just look like dust on the screen.
-    n_particles = 4 if (wdx != 0 or wdy != 0) else 0
 
     def do_resize():
         cols, rows = get_size()
@@ -567,13 +893,15 @@ def run(argv=None):
         # produces a difference between prev and current.
         state["prev_grid"] = state["grid"].copy()
         state["prev_dir_grid"] = state["dir_grid"].copy()
-        if n_particles:
-            state["particles"] = np.column_stack([
-                rng.random(n_particles) * rows,
-                rng.random(n_particles) * cols,
-            ]).astype(np.float32)
-        else:
-            state["particles"] = None
+        # Drop scratch axes since shape may have changed; let `_flow_field`
+        # re-allocate on demand the next time it's called.
+        state["flow_scratch"] = {}
+        state["wfx"], state["wfy"] = _flow_field(
+            rows, cols, state["sim_t"], wind_strength, turbulence,
+            bias_x, bias_y, scale, state["flow_scratch"],
+        )
+        # Drop in-flight embers — their (y, x) might be off the new grid.
+        state["embers"] = np.empty((0, 3), dtype=np.float32)
         sys.stdout.write(CLEAR_SCREEN)
         sys.stdout.flush()
 
@@ -629,28 +957,45 @@ def run(argv=None):
                 state["prev_grid"] = state["grid"].copy()
                 state["prev_dir_grid"] = state["dir_grid"].copy()
             state["grid"], state["dir_grid"] = _step_forest(
-                state["grid"], dir_table, growth, lightning, rng
+                state["grid"], spread, state["wfx"], state["wfy"],
+                growth, lightning, rng,
             )
+            # Embers are a sim-time concept (eject + ignition), so they tick
+            # alongside the cell automaton, not the render loop.
+            if embers_active:
+                state["embers"] = _spawn_embers(
+                    state["grid"] == BURNING, state["embers"],
+                    wind_strength, ember_spawn_p_eff, rng,
+                )
+                state["embers"] = _ignite_embers(
+                    state["embers"], state["grid"], state["dir_grid"],
+                    ember_ignite_p_eff, rng,
+                )
             step_accum -= 1.0
             steps_this_frame += 1
             stepped = True
 
         if stepped:
             state["frames_since_step"] = 0
+            # Advance the field once per sim batch, not per intermediate sim
+            # step inside this frame (the cells don't see the in-between
+            # field anyway, and the visual smoothing only blends grid state).
+            state["sim_t"] += 1.0
+            rows_g, cols_g = state["grid"].shape
+            state["wfx"], state["wfy"] = _flow_field(
+                rows_g, cols_g, state["sim_t"], wind_strength, turbulence,
+                bias_x, bias_y, scale, state["flow_scratch"],
+            )
         else:
             state["frames_since_step"] += 1
 
-        # Advance wind particles per render frame (decoupled from sim speed).
-        # Wrap on screen edges so they keep drifting indefinitely.
-        if state["particles"] is not None:
-            rows_p, cols_p = state["grid"].shape
-            particle_speed = 0.5
-            state["particles"][:, 0] = (
-                state["particles"][:, 0] + wdy * particle_speed
-            ) % rows_p
-            state["particles"][:, 1] = (
-                state["particles"][:, 1] + wdx * particle_speed
-            ) % cols_p
+        # Per-frame ember motion (decoupled from sim speed for smoothness).
+        if embers_active and state["embers"].shape[0] > 0:
+            state["embers"] = _advect_embers(
+                state["embers"], state["wfx"], state["wfy"],
+                state["grid"].shape,
+                ember_life_decay_eff, ember_buoyancy_eff, rng,
+            )
 
         # Stagger per-cell state flips across the frames between sim ticks.
         # Each cell has a deterministic flip threshold flip_at_t in [0, 1)
@@ -672,7 +1017,7 @@ def run(argv=None):
 
         char_arr, rgb_arr = _compute_frame(
             visible_grid, visible_dir, state["hash"], tick,
-            wdx, wdy, state["particles"],
+            state["wfx"], state["wfy"], state["embers"],
         )
         _emit_diff(char_arr, rgb_arr, state["prev"], write)
         flush()
