@@ -821,7 +821,7 @@ def run(argv=None):
     flags = parse_flags(argv)
     growth = num(flags.get("growth"), 0.002, 0, 0.05)
     lightning = num(flags.get("lightning"), 0.00001, 0, 0.001)
-    spread = num(flags.get("spread"), 0.7, 0.05, 1)
+    spread = num(flags.get("spread"), 0.6, 0.05, 1)
     speed = num(flags.get("speed"), 1.0, 0.0, 10.0)
     fps = num_int(flags.get("fps"), 60, 10, 60)
     density = num(flags.get("density"), 0.43, 0, 1)
@@ -839,7 +839,7 @@ def run(argv=None):
     # so default 1.0 keeps the previously-tuned behavior. `--embers 0`
     # disables sparks entirely (gates spawn off; advect/ignite become no-ops).
     embers_intensity = num(flags.get("embers"), 1.0, 0.0, 3.0)
-    ember_ignite_mult = num(flags.get("ember-ignite"), 0.6, 0.0, 3.0)
+    ember_ignite_mult = num(flags.get("ember-ignite"), 0.33, 0.0, 3.0)
     ember_life_mult = num(flags.get("ember-life"), 2.5, 0.25, 4.0)
     ember_buoyancy_mult = num(flags.get("ember-buoyancy"), 0.0, 0.0, 2.0)
     ember_spawn_p_eff = EMBER_SPAWN_P * embers_intensity

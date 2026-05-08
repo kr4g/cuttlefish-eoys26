@@ -35,36 +35,38 @@ which then have a probability of igniting any tree they land on.
 
 | flag           | range                                | default     |
 | -------------- | ------------------------------------ | ----------- |
-| `--growth`     | `0..0.05`                            | `0.001`     |
-| `--lightning`  | `0..0.001`                           | `0.000005`  |
+| `--growth`     | `0..0.05`                            | `0.002`     |
+| `--lightning`  | `0..0.001`                           | `0.00001`   |
 | `--spread`     | `0.05..1`                            | `0.6`       |
 | `--speed`      | `0..10`                              | `1.0`       |
 | `--fps`        | `10..60`                             | `60`        |
-| `--density`    | `0..1`                               | `0.55`      |
+| `--density`    | `0..1`                               | `0.43`      |
 
 #### Wind / flow field
 
 | flag           | range                                | default   |
 | -------------- | ------------------------------------ | --------- |
-| `--wind`       | `0..3` (overall flow strength)       | `2.0`     |
-| `--turbulence` | `0..1` (rate of field churn)         | `0.5`     |
+| `--wind`       | `0..3` (overall flow strength)       | `1.0`     |
+| `--turbulence` | `0..1` (rate of field churn)         | `0.3`     |
 | `--bias`       | `none/n/ne/e/se/s/sw/w/nw`           | `none`    |
-| `--scale`      | `0.5..4` (size of dominant swirls)   | `2.0`     |
+| `--scale`      | `0.5..4` (size of dominant swirls)   | `3.0`     |
 
 `--wind 0` is calm: no flow field, no smoke, no embers, no tint, and the
 spread step skips the per-cell alignment work — same cost as before.
 
 #### Embers (active when `--wind > 0` and `--embers > 0`)
 
-All four are *multipliers* on the built-in defaults, so `1.0` keeps the
-out-of-the-box behavior; raise to amplify, lower (or `0`) to dampen.
+All four are *multipliers* on the in-code base constants (`EMBER_SPAWN_P`,
+`EMBER_IGNITE_P`, `EMBER_LIFE_DECAY`, `EMBER_BUOYANCY`); raise to amplify,
+lower (or `0`) to dampen. The defaults below are the tuned-for-feel values,
+not necessarily `1.0`.
 
 | flag                | range          | default | meaning                                              |
 | ------------------- | -------------- | ------- | ---------------------------------------------------- |
 | `--embers`          | `0..3`         | `1.0`   | spark spawn rate (`0` = no embers ever)              |
-| `--ember-ignite`    | `0..3`         | `1.0`   | per-spark ignition probability when on a tree        |
-| `--ember-life`      | `0.25..4`      | `1.0`   | lifetime multiplier (`2.0` = 2x reach, more in flight) |
-| `--ember-buoyancy`  | `0..2`         | `1.0`   | upward drift (`0` = ride only the wind)              |
+| `--ember-ignite`    | `0..3`         | `0.33`  | per-spark ignition probability when on a tree        |
+| `--ember-life`      | `0.25..4`      | `2.5`   | lifetime multiplier (higher = more reach, more in flight) |
+| `--ember-buoyancy`  | `0..2`         | `0.0`   | upward drift (`0` = ride only the wind)              |
 
 ## Adding an animation
 
