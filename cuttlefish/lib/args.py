@@ -1,7 +1,4 @@
-"""Tiny long-flag parser:  --key value   or   --key=value   or   --flag
-
-No deps, no surprises. Unknown flags are kept as strings on the result.
-"""
+"""Tiny long-flag parser:  --key value   or   --key=value   or   --flag"""
 
 import math
 
