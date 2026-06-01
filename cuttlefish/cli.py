@@ -2,6 +2,8 @@ import sys
 
 from .animations import animations
 
+ALIASES = {}
+
 
 def _print_list(out=sys.stdout):
     out.write("cuttlefish - terminal animations\n\n")
@@ -9,12 +11,15 @@ def _print_list(out=sys.stdout):
     out.write("  python -m cuttlefish <name> [options]   run an animation\n")
     out.write("  python -m cuttlefish --list             list available animations\n\n")
     out.write("Available:\n")
-    pad = max(len(n) for n in animations)
-    for name, anim in animations.items():
-        m = anim.meta
-        out.write(f"  {name.ljust(pad)}  {m['description']}\n")
-        if m.get("usage"):
-            out.write(f"  {' ' * pad}  {m['usage']}\n")
+    if not animations:
+        out.write("  (none yet)\n")
+    else:
+        pad = max(len(n) for n in animations)
+        for name, anim in animations.items():
+            m = anim.meta
+            out.write(f"  {name.ljust(pad)}  {m['description']}\n")
+            if m.get("usage"):
+                out.write(f"  {' ' * pad}  {m['usage']}\n")
 
 
 def main(argv):
@@ -22,7 +27,7 @@ def main(argv):
         _print_list()
         return 0
 
-    name = argv[0]
+    name = ALIASES.get(argv[0], argv[0])
     anim = animations.get(name)
     if anim is None:
         sys.stderr.write(f"unknown animation: {name}\n\n")

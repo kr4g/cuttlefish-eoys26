@@ -1,5 +1,5 @@
-from . import forest_fire
+from . import bitwise
 
 animations = {
-    forest_fire.meta["name"]: forest_fire,
+    bitwise.meta["name"]: bitwise,
 }

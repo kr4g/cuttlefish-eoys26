@@ -1,8 +1,6 @@
 # cuttlefish EoYS '26
 
-Terminal animations rendered with truecolor ANSI characters. Each animation
-is a self-contained module under `cuttlefish/animations/` and runs until
-`Ctrl-C`.
+Terminal animation rendered with truecolor ANSI characters.
 
 Requires Python 3.9+, `numpy`, and a TTY with 24-bit color.
 
@@ -12,58 +10,54 @@ Requires Python 3.9+, `numpy`, and a TTY with 24-bit color.
 pip install -e .                      # or: pip install numpy
 
 python -m cuttlefish --list
-python -m cuttlefish forest-fire
-python -m cuttlefish forest-fire --wind 2.5 --bias e --embers 2 --ember-life 1.5
+python -m cuttlefish bitwise
+python -m cuttlefish bitwise --help
 ```
 
-## Animations
+## App
 
-One animation so far. More on the way.
+### `bitwise`
 
-### `forest-fire`
+Important flags:
 
-A regrowing forest plagued by lightning, fire, a swirling wind field, and
-flying embers.
-
-| flag               | range                      | default   |
-| ------------------ | -------------------------- | --------- |
-| `--growth`         | `0..0.05`                  | `0.002`   |
-| `--lightning`      | `0..0.001`                 | `0.00001` |
-| `--spread`         | `0.05..1`                  | `0.63`    |
-| `--density`        | `0..1`                     | `0.33`    |
-| `--speed`          | `0..10`                    | `1.0`     |
-| `--fps`            | `10..60`                   | `60`      |
-| `--wind`           | `0..3`                     | `2.0`     |
-| `--turbulence`     | `0..1`                     | `0.4`     |
-| `--scale`          | `0.5..4`                   | `3.0`     |
-| `--bias`           | `none/n/ne/e/se/s/sw/w/nw` | `none`    |
-| `--embers`         | `0..3`                     | `1.25`    |
-| `--ember-ignite`   | `0..3`                     | `0.43`    |
-| `--ember-life`     | `0.25..4`                  | `2.0`     |
-| `--ember-buoyancy` | `0..2`                     | `0.0`     |
-
-`--wind 0` disables wind, smoke, embers, and the canopy tint. The four
-`--ember-*` flags are multipliers on in-code base constants, so `1.0`
-matches the tuned defaults; `0` disables that ember behavior.
-
-## Adding an animation
-
-Create `cuttlefish/animations/<name>.py` exporting a `meta` dict and a
-`run(argv)` callable, then register it in
-`cuttlefish/animations/__init__.py`.
-
-```python
-meta = {
-    "name": "my-anim",
-    "description": "one-line description",
-    "usage": "[--option N]",
-}
-
-def run(argv=None):
-    ...
-```
+- `--formula-seconds N` random formula interval
+- `--vars-seconds N` random vars interval
+- `--color-cycle-rate N` color mode cycle/interpolation rate
+- `--seed N` deterministic formula/var schedule seed
+- `--time-scale N` scalar for bitwise time integer
+- `--char-mode ramp|formula`
+- `--char-mix 0..1`
+- `--char-min N`, `--char-max N`
+- `--char-rate 0..4`, `--char-steps 8..2048`
+- `--fps 10..60`
+- `--emit auto|full|diff`
 
 Shared helpers in `cuttlefish/lib/`:
 
 - `terminal.py` — ANSI sequences, alt-screen, exit handlers
 - `args.py` — `parse_flags`, `num`, `num_int`
+- `viewport.py` — hostname/grid tile mapping and global coordinate fields
+- `clock.py` — monotonic local clock with optional shared epoch anchoring
+- `spectral.py` — intensity to spectral color and glyph mapping
+- `shader_runner.py` — shared fullscreen loop for `(x, y, t)` effects
+
+## 4x4 Multi-Shell Simulation
+
+```bash
+./scripts/simulate_grid_kitty.sh bitwise
+./scripts/simulate_grid_iterm2.sh bitwise
+```
+
+Useful environment variables for launchers:
+
+- `FPS=60`
+- `EPOCH_OFFSET=0`
+- `EPOCH_UNIX=<shared unix seconds>` (if unset, launcher captures one shared epoch per run)
+- `GRID_COLS=4`, `GRID_ROWS=4`
+- `TILE_COLS=120`, `TILE_ROWS=36`
+
+Grid conventions:
+
+- `row=0,col=0` is bottom-left
+- `row` increases upward
+- `col` increases to the right
