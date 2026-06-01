@@ -31,9 +31,17 @@ Important flags:
 - `--char-rate 0..4`, `--char-steps 8..2048`
 - `--fps 10..60`
 - `--emit auto|full|diff`
-- `--hostname XY` two-digit grid position (`X`=col, `Y`=row, e.g. `01` = col 0, row 1); if omitted on a real machine the program prompts for it
+- `--hostname XY` two-digit grid position (`X`=col, `Y`=row, e.g. `01` = col 0, row 1)
 - `--col N`, `--row N`, `--grid-cols N`, `--grid-rows N` explicit tile placement (used by the simulators)
-- `--test` (or `--single`) render the whole pattern in one terminal; skips the position prompt
+- `--test` (or `--single`) render the whole pattern in one terminal; skips position resolution
+
+Each machine resolves its own grid position automatically, in this order:
+
+1. explicit flags (`--hostname XY`, or `--col`/`--row`)
+2. the `CUTFISH_POSITION` env var (e.g. `CUTFISH_POSITION=21`) — set this per machine for automated launches
+3. the OS hostname, if it ends in two digits (e.g. a Pi named `21` -> col 2, row 1)
+
+Only if none of those resolve does it prompt (interactive terminals) or warn and fall back to a single tile (non-interactive). So an automated launcher can run the identical command everywhere and let each machine self-identify.
 
 All machines stay in sync when they share a `--seed` and clock. The seed defaults to a per-minute bucket (`int(time.time()) // 60`), so machines launched in the same minute match; pass `--seed N` from the launcher for race-free sync. For a seamless image every machine must use the same `--tile-cols`/`--tile-rows`.
 

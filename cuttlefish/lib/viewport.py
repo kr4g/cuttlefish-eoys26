@@ -1,3 +1,4 @@
+import os
 import re
 import socket
 from dataclasses import dataclass
@@ -5,6 +6,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from .args import num_int
+
+
+_POSITION_ENV_VARS = ("CUTFISH_POSITION", "CUTFISH_HOSTNAME")
 
 
 @dataclass(frozen=True)
@@ -28,8 +32,30 @@ def _parse_hostname_tile(hostname):
     return None
 
 
+def _env_hostname():
+    for name in _POSITION_ENV_VARS:
+        val = os.environ.get(name)
+        if val:
+            return val
+    return None
+
+
+def resolve_host(flags):
+    flag_host = flags.get("hostname")
+    if flag_host:
+        return str(flag_host)
+    return str(_env_hostname() or socket.gethostname())
+
+
+def position_resolvable(flags):
+    if "hostname" in flags or "col" in flags or "row" in flags:
+        return True
+    host = _env_hostname() or socket.gethostname()
+    return _parse_hostname_tile(str(host)) is not None
+
+
 def resolve_viewport(flags):
-    host = str(flags.get("hostname") or socket.gethostname())
+    host = resolve_host(flags)
     parsed = _parse_hostname_tile(host)
     default_grid = 4 if parsed is not None else 1
 

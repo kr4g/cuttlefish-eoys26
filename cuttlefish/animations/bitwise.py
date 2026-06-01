@@ -6,6 +6,7 @@ import numpy as np
 
 from ..lib.args import num, num_int, parse_flags
 from ..lib.shader_runner import run_terminal_animation
+from ..lib.viewport import position_resolvable
 
 try:
     from wcwidth import wcwidth as _wcwidth
@@ -77,9 +78,10 @@ meta = {
     "name": "bitwise",
     "description": (
         "Bitwise formula lab with timed random formula and variable switching. "
-        "For a 4x4 wall, run on each machine with a two-digit position XY "
-        "(X=col 0-3, Y=row 0-3, 00 = bottom-left); without --hostname/--test it "
-        "prompts for the position. All machines share the same formula/vars/colors "
+        "For a 4x4 wall, each machine self-resolves its two-digit position XY "
+        "(X=col 0-3, Y=row 0-3, 00 = bottom-left) from --hostname, the "
+        "CUTFISH_POSITION env var, or an NN-suffixed OS hostname; only if none "
+        "resolve does it prompt (interactive) or warn. All machines share the same formula/vars/colors "
         "when they share a --seed and clock (seed defaults to a per-minute bucket; "
         "pass --seed N from the launcher for race-free sync). Use --test for a single "
         "terminal. For a seamless image every machine must use the same "
@@ -520,13 +522,19 @@ def run(argv=None):
     help_requested = "-h" in argv or "--help" in argv or "help" in flags
     if not help_requested:
         test_mode = "test" in flags or "single" in flags
-        position_given = "hostname" in flags or "col" in flags or "row" in flags
         if test_mode:
             argv += ["--grid-cols", "1", "--grid-rows", "1", "--col", "0", "--row", "0"]
-        elif not position_given and sys.stdin.isatty():
-            host = _prompt_hostname()
-            if host is not None:
-                argv += ["--hostname", host]
+        elif not position_resolvable(flags):
+            if sys.stdin.isatty():
+                host = _prompt_hostname()
+                if host is not None:
+                    argv += ["--hostname", host]
+            else:
+                sys.stderr.write(
+                    "cuttlefish: grid position unresolved (no --hostname/--col/--row, "
+                    "no CUTFISH_POSITION, and hostname has no NN suffix); rendering as a "
+                    "single tile.\n"
+                )
         if "epoch-unix" not in flags:
             argv += ["--epoch-unix", str(_DEFAULT_EPOCH_UNIX)]
 
