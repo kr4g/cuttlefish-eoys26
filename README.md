@@ -31,6 +31,11 @@ Important flags:
 - `--char-rate 0..4`, `--char-steps 8..2048`
 - `--fps 10..60`
 - `--emit auto|full|diff`
+- `--hostname XY` two-digit grid position (`X`=col, `Y`=row, e.g. `01` = col 0, row 1); if omitted on a real machine the program prompts for it
+- `--col N`, `--row N`, `--grid-cols N`, `--grid-rows N` explicit tile placement (used by the simulators)
+- `--test` (or `--single`) render the whole pattern in one terminal; skips the position prompt
+
+All machines stay in sync when they share a `--seed` and clock. The seed defaults to a per-minute bucket (`int(time.time()) // 60`), so machines launched in the same minute match; pass `--seed N` from the launcher for race-free sync. For a seamless image every machine must use the same `--tile-cols`/`--tile-rows`.
 
 Shared helpers in `cuttlefish/lib/`:
 
@@ -61,3 +66,4 @@ Grid conventions:
 - `row=0,col=0` is bottom-left
 - `row` increases upward
 - `col` increases to the right
+- `--hostname XY` maps the first digit to `col` and the second to `row` (e.g. `01` = col 0, row 1 = the tile above bottom-left)

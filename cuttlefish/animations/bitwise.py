@@ -1,3 +1,4 @@
+import sys
 import time
 import unicodedata
 
@@ -13,6 +14,7 @@ except Exception:
 
 
 _MASK64 = (1 << 64) - 1
+_DEFAULT_EPOCH_UNIX = 1780272000
 _SAFE_RANGE_CACHE = {}
 _EVAL_GLOBALS = {"__builtins__": {}}
 _BLOCKED_CP_RANGES = (
@@ -73,13 +75,23 @@ _FORMULAS = [{"id": fid, "code": compile(expr, f"<bitwise-{fid}>", "eval")} for 
 
 meta = {
     "name": "bitwise",
-    "description": "Bitwise formula lab with timed random formula and variable switching.",
+    "description": (
+        "Bitwise formula lab with timed random formula and variable switching. "
+        "For a 4x4 wall, run on each machine with a two-digit position XY "
+        "(X=col 0-3, Y=row 0-3, 00 = bottom-left); without --hostname/--test it "
+        "prompts for the position. All machines share the same formula/vars/colors "
+        "when they share a --seed and clock (seed defaults to a per-minute bucket; "
+        "pass --seed N from the launcher for race-free sync). Use --test for a single "
+        "terminal. For a seamless image every machine must use the same "
+        "--tile-cols/--tile-rows."
+    ),
     "usage": (
+        "[--test] [--single] "
         "[--formula-seconds N] [--vars-seconds N] [--seed N] [--time-scale N] "
         "[--color-cycle-rate N] "
         "[--freq 0.5..20] [--amount 0..10] [--sym 1..16] [--complexity 1..12] "
         "[--zoom 0.45..3.5] [--aspect 0.2..2.0] [--speed -3..3] [--fps 10..60] "
-        "[--grid-cols N] [--grid-rows N] [--col N] [--row N] [--hostname NAME] "
+        "[--grid-cols N] [--grid-rows N] [--col N] [--row N] [--hostname XY] "
         "[--tile-cols N] [--tile-rows N] [--epoch-unix T] [--epoch-offset T] "
         "[--color-steps 8..512] [--emit auto|full|diff] [--diff-threshold 0..1] "
         "[--char-mode ramp|formula] [--char-mix 0..1] [--char-min N] [--char-max N] "
@@ -257,32 +269,35 @@ def _make_mode_order(seed, cycle_idx, avoid_first):
     return order
 
 
+def _color_modes_at(seed, step):
+    n = len(_BIT_COLOR_MODES)
+    span = max(1, n - 1)
+    if step < 0:
+        step = 0
+    cycle = step // span
+    index = step % span
+    if cycle == 0:
+        avoid = None
+    else:
+        avoid = _make_mode_order(seed, cycle - 1, None)[-1]
+    order = _make_mode_order(seed, cycle, avoid)
+    cur = order[index]
+    nxt = order[(index + 1) % n]
+    return cur, nxt
+
+
 def _advance_color_cycle(state, t_base, rate):
+    seed = state["seed"]
     if rate <= 0.0:
-        cur = state["order"][state["index"]]
-        nxt = state["order"][(state["index"] + 1) % len(state["order"])]
+        cur, nxt = _color_modes_at(seed, 0)
         return cur, nxt, 0.0
 
     elapsed = t_base * rate
+    if elapsed < 0.0:
+        elapsed = 0.0
     step = int(np.floor(elapsed))
     phase = float(elapsed - step)
-    if step < state["step"]:
-        state["cycle"] = 0
-        state["order"] = _make_mode_order(state["seed"], 0, None)
-        state["index"] = 0
-        state["step"] = step
-    elif step != state["step"]:
-        delta = max(0, step - state["step"])
-        for _ in range(delta):
-            state["index"] += 1
-            if state["index"] >= len(state["order"]) - 1:
-                last = state["order"][-1]
-                state["cycle"] += 1
-                state["order"] = _make_mode_order(state["seed"], state["cycle"], last)
-                state["index"] = 0
-        state["step"] = step
-    cur = state["order"][state["index"]]
-    nxt = state["order"][(state["index"] + 1) % len(state["order"])]
+    cur, nxt = _color_modes_at(seed, step)
     return cur, nxt, phase
 
 
@@ -341,10 +356,6 @@ def _formula_effect_factory(config):
         "vars": _rand_vars(config["seed"], 0),
         "color": {
             "seed": config["seed"],
-            "order": _make_mode_order(config["seed"], 0, None),
-            "index": 0,
-            "step": 0,
-            "cycle": 0,
         },
     }
 
@@ -487,15 +498,43 @@ def _formula_effect_factory(config):
     return effect
 
 
+def _prompt_hostname():
+    for _ in range(5):
+        try:
+            raw = input("Monitor position XY (e.g. 01 = col 0, row 1): ")
+        except (EOFError, KeyboardInterrupt):
+            return None
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        if len(digits) == 2 and all(0 <= int(ch) <= 3 for ch in digits):
+            return digits
+        sys.stderr.write("Enter exactly two digits 0-3, e.g. 21 for col 2, row 1.\n")
+    return None
+
+
 def run(argv=None):
     if argv is None:
         argv = []
+    argv = list(argv)
     flags = parse_flags(argv)
+
+    help_requested = "-h" in argv or "--help" in argv or "help" in flags
+    if not help_requested:
+        test_mode = "test" in flags or "single" in flags
+        position_given = "hostname" in flags or "col" in flags or "row" in flags
+        if test_mode:
+            argv += ["--grid-cols", "1", "--grid-rows", "1", "--col", "0", "--row", "0"]
+        elif not position_given and sys.stdin.isatty():
+            host = _prompt_hostname()
+            if host is not None:
+                argv += ["--hostname", host]
+        if "epoch-unix" not in flags:
+            argv += ["--epoch-unix", str(_DEFAULT_EPOCH_UNIX)]
+
     config = {
-        "formula_seconds": num(flags.get("formula-seconds"), 120.0, 0.0, 3600.0),
+        "formula_seconds": num(flags.get("formula-seconds"), 90.0, 0.0, 3600.0),
         "vars_seconds": num(flags.get("vars-seconds"), 30.0, 0.0, 3600.0),
         "color_cycle_rate": num(flags.get("color-cycle-rate"), 0.1, 0.0, 0.5),
-        "seed": num_int(flags.get("seed"), int(time.time()) & 0x7FFFFFFF, 0, 0x7FFFFFFF),
+        "seed": num_int(flags.get("seed"), (int(time.time()) // 60) & 0x7FFFFFFF, 0, 0x7FFFFFFF),
         "time_scale": num(flags.get("time-scale"), 4.0, 0.1, 65536.0),
     }
     effect = _formula_effect_factory(config)
